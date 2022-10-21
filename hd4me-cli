@@ -1,0 +1,82 @@
+#!/usr/bin/python3
+# -*- coding: utf-8 -*-
+
+import os
+import argparse
+import requests
+from parsel import Selector
+import subprocess
+from subprocess import Popen, PIPE
+
+parser = argparse.ArgumentParser()
+parser.add_argument("-s", "--search", help="Search for a string inside the title", default="")
+parser.add_argument("-d", "--download", help="Add the mega link to the download queue. --mega and the mega-cli are required", action="store_true", default=False)
+parser.add_argument("-i", "--info", help="Get video info", action="store_true", default=False)
+parser.add_argument("-p", "--path", help="Download path, required by --download, defaults to the current directory")
+args = parser.parse_args()
+
+def main():
+
+    tot_lookup = requests.get('https://hd4me.net/lista-film', timeout=10 )
+    selector = Selector(tot_lookup.text)
+
+    texts = selector.xpath("//li[@class='title_item']/a[1]/text()").getall()
+    links = selector.xpath("//li[@class='title_item']/a[1]/@href").getall()
+
+    data = dict(zip(texts, links))
+
+    for k,v in data.items():
+
+      if (args.search).lower() in k.lower():
+          link = "https://hd4me.net/" + v.replace("?p=", "")
+          mega_link = ""
+
+          if args.info:
+              info = get_megainfo(link)
+              response = requests.get(info)
+              print(response.text)
+              continue
+          else:
+              mega_link = get_megalink(link)
+
+          print("%s (%s)" % (k, mega_link))
+
+          if args.download:
+
+              if args.path:
+                  print("Downloading to " + args.path)
+                  p = Popen(["mega-get", "-q", "--ignore-quota-warn", mega_link, args.path], stdout=PIPE, stderr=PIPE)
+              else:
+                  print("Downloading to " + os.getcwd())
+                  p = Popen(["mega-get", "-q", "--ignore-quota-warn", mega_link], stdout=PIPE, stderr=PIPE)
+
+              output, error = p.communicate()
+
+              if p.returncode != 0: 
+                  print("Download error: %s" % (output.decode('ascii')))
+              else:
+                  print("Download started")
+
+
+def get_megalink(link):
+
+    response = requests.get(link)
+    m_selector = Selector(response.text)
+
+    try:
+        hd4me_link = m_selector.xpath('//a[@class="bot1"]/@href').get()
+        return(hd4me_link.replace('https://hd4me.net/?','https://mega.nz/#'))
+    except:
+        return(m_selector.xpath('//a[@class="bot"]/@href').get())
+
+def get_megainfo(link):
+
+    response = requests.get(link)
+    m_selector = Selector(response.text)
+
+    hd4me_link = m_selector.xpath('//a[@class="bot"]/@href').get()
+
+    return(hd4me_link)
+
+
+if __name__ == '__main__': main()
