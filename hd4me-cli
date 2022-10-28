@@ -3,89 +3,155 @@
 
 import argparse
 from bs4 import BeautifulSoup
+import html
 import json
 import os
 from parsel import Selector
-from pprint import pprint
+from queue import Queue
 import re
 import requests
 from subprocess import Popen, PIPE
+from threading import Thread
 
 parser = argparse.ArgumentParser()
-parser.add_argument("-s", "--search", help="Cerca una stringa specifica nel nome", default="")
-parser.add_argument("-y", "--anno-release", help="Restringi la ricerca film per anno di rilascio", type=int)
+parser.add_argument('movie_title', help="Cerca una stringa specifica nel titolo, per elencare tutti i film usare \"\" (vuoto)")
+
+parser.add_argument("-l", "--list", help="Elenca semplicemente i film trovati dalla ricerca (senza ulteriori dati, per velocizzare la ricerca, \
+                    non sarà possibile usare --min-year, --max-year e --min-rating)",
+                    action="store_true", default=False)
+parser.add_argument("--min-year", help="Imposta l'anno minimo dei film da elencare", type=int)
+parser.add_argument("--max-year", help="Imposta l'anno minimo dei film da elencare (oggi, se assente)", type=int)
+parser.add_argument("--min-rating", help="Imposta il rating minimo dei film da elencare", type=int)
+
+parser.add_argument("-r", "--rating", help="Ordina i film per IMdb rating", action="store_true", default=False)
+parser.add_argument("-y", "--year", help="Ordina i film per anno di rilascio", action="store_true", default=False)
+
 parser.add_argument("-d", "--download", help="Aggiungi il link mega alla coda download (richiede mega-cli installato)",
                     action="store_true", default=False)
-parser.add_argument("-m", "--mediainfo", help="Scarica il file metadati del video da hd4me", action="store_true",
-                    default=False)
-parser.add_argument("-i", "--info", help="Scarica i dettagli del film da IMdb", action="store_true", default=False)
-parser.add_argument("--rating", help="Ordina i film per IMdb rating", action="store_true", default=False)
-parser.add_argument("--data", help="Ordina i film per data di rilascio", action="store_true", default=False)
 parser.add_argument("-p", "--path",
                     help="Imposta un percorso per il download, se assente scarica nella directory corrente")
+
+parser.add_argument("-i", "--info", help="Visualizza tutti i dettagli del film da IMdb", action="store_true", default=False)
+
+parser.add_argument("--backup", help="Crea una cartella 'backup' ed esporta tutti i dati sui film di hd4me e relativi file data in quella cartella", action="store_true", default=False)
+
 args = parser.parse_args()
 
 
 def main():
-    tot_lookup = requests.get('https://hd4me.net/lista-film', timeout=10)
-    selector = Selector(tot_lookup.text)
+    hd4me_source = requests.get('https://hd4me.net/lista-film', timeout=10)
+    selector = Selector(hd4me_source.text)
 
-    texts = selector.xpath("//li[@class='title_item']/a[1]/text()").getall()
+    titles = selector.xpath("//li[@class='title_item']/a[1]/text()").getall()
     links = selector.xpath("//li[@class='title_item']/a[1]/@href").getall()
 
-    data = dict(zip(texts, links))
-    movies = {}
+    data = dict(zip(titles, links))
 
-    for k, v in data.items():
+    movies = {}
+    threads = []
+    q = Queue()
+
+    for full_title, download_link in data.items():
 
         try:
-            hd4me_title = re.search(r"(^.*)\s\(", k)[1]
+            hd4me_title = re.search(r"(^.*)\s\(", full_title)[1]
         except:
-            hd4me_title = k
+            hd4me_title = full_title
 
-        if args.search.lower() in hd4me_title.lower():
+        if args.movie_title.lower() in hd4me_title.lower():
 
-            link = "https://hd4me.net/" + v.replace("?p=", "")
-            hd4me_page = requests.get(link)
+            hd4me_page = requests.get("https://hd4me.net/" + download_link.replace("?p=", ""))
             mega_link = ""
 
-            if args.mediainfo:
-                info = get_megainfo(hd4me_page)
-                response = requests.get(info)
-                print(response.text)
+            mega_link = get_megalink(hd4me_page)
+            imdb_id = get_imdb_id(hd4me_page)
+
+            if args.list:
+                print(hd4me_title, download_link)
                 continue
+
+            elif args.backup:
+                if not os.path.exists(os.getcwd() + "/backup"):
+                    os.mkdir(os.getcwd() + "/backup")
+
+                info = get_medialink(hd4me_page)
+                media_info = requests.get(info)
+
+                try:
+                    media_title = re.search(r"(Nome\:\s(.*)(.mkv|.avi))", media_info.text)[2]
+                except:
+                    media_title = full_title
+                print(media_title)
+
+                # Write the media info file
+                f = open(os.getcwd() + "/backup/" + media_title.replace("/", "-") + ".txt", "w")
+                f.write(media_info.text)
+                f.close()
+
+                # Append the file data into the csv
+                f = open(os.getcwd() + "/backup/hd4me_movies.txt", "a")
+                f.write("%s,%s,%s,%s\n" % (hd4me_title, media_title, mega_link, imdb_id))
+                f.close()
+
+                continue
+
             else:
-                mega_link = get_megalink(hd4me_page)
+                t = Thread(target=get_imdb_json, args=(imdb_id, hd4me_title, mega_link, q, ), name=full_title)
+                t.start()
+                threads.append(t)
 
-            imdb_json = get_imdb_json(hd4me_page)
-            plot = imdb_json['description']
-            imdb_title = imdb_json['name'].replace("&apos;", "'")
-            genres = ", ".join(imdb_json['genre'])
-            rating = imdb_json['aggregateRating']['ratingValue']
-            date_published = imdb_json['datePublished']
-            year = imdb_json['datePublished'][0:4]
+    for t in threads:
+        t.join()
 
-            if args.anno_release:
-                if str(args.anno_release) == year:
-                    m = Movie(hd4me_title, imdb_title, date_published, rating, genres, plot, mega_link)
-                    movies[k] = m
+    while not q.empty():
+        imdb_json = q.get()
 
-            else:
-                m = Movie(hd4me_title, imdb_title, date_published, rating, genres, plot, mega_link)
-                movies[k] = m
+        plot = imdb_json['description']
+        imdb_title = imdb_json['imdb_title']
+        hd4me_title = imdb_json['hd4me_title']
+        genres = imdb_json['genre']
+        rating = imdb_json['rating']
+        date_published = imdb_json['datePublished']
+        year = int(imdb_json['year'])
+        mega_link = imdb_json['mega_link']
+
+        m = Movie(hd4me_title, imdb_title, date_published, rating, genres, plot, mega_link)
+
+        if args.min_year and args.max_year and args.min_rating:
+            if year >= args.min_year and year <= args.max_year and rating >= args.min_rating:
+                movies[hd4me_title] = m
+
+        elif args.min_year and args.max_year:
+            if year >= args.min_year and year <= args.max_year:
+                movies[hd4me_title] = m
+
+        elif args.min_year:
+            if year >= args.min_year:
+                movies[hd4me_title] = m
+
+        elif args.max_year:
+            if year <= args.min_year:
+                movies[hd4me_title] = m
+
+        elif args.min_rating:
+            if rating >= args.min_rating:
+                movies[hd4me_title] = m
+
+        else:
+            movies[hd4me_title] = m
 
     if args.rating:
         movies = sort_by_rating(movies)
 
-    if args.data:
+    if args.year:
         movies = sort_by_year(movies)
 
     for title, movie in movies.items():
         if args.info:
-            print("%s (Data: %s, Rating: %s)\nDownload: %s\nGenere: %s\nTrama:%s" % (
-            movie.imdb_title, movie.date_published, movie.rating, movie.mega_link, movie.genres, movie.plot))
+            print("%s (Data rilascio: %s, IMDB Rating: %s)\nDownload link: %s\nGenere: %s\nTrama: %s\n---" %
+                  (movie.imdb_title, movie.date_published, movie.rating, movie.mega_link, movie.genres, movie.plot))
         else:
-            print("%s - (%s, %s - rating: %s)" % (movie.hd4me_title, movie.imdb_title, movie.date_published[0:4], movie.rating))
+            print("%s - (%s, %s - rating: %s)" % (movie.hd4me_title, movie.imdb_title, movie.date_published, movie.rating))
 
         if args.download:
 
@@ -115,42 +181,59 @@ def get_megalink(response):
         return m_selector.xpath('//a[@class="bot"]/@href').get()
 
 
-def get_megainfo(response):
+def get_medialink(response):
     m_selector = Selector(response.text)
-    hd4me_link = m_selector.xpath('//a[@class="bot"]/@href').get()
+    hd4me_mediainfo_link = m_selector.xpath('//a[@class="bot"]/@href').get()
 
-    return (hd4me_link)
+    return (hd4me_mediainfo_link)
 
 
-def get_imdb_json(response):
+def get_imdb_id(response):
+
     i_selector = Selector(response.text)
-    
     imdb_id = i_selector.xpath('//div[@class="imdbRatingPlugin"]/@data-title').get()
-    if imdb_id == None:
+
+    if imdb_id is None:
         imdb_id = i_selector.xpath('//span[@class="imdbRatingPlugin"]/@data-title').get()
 
-    imdb_json = json.loads("""
+    return imdb_id
+
+
+def get_imdb_json(imdb_id, hd4me_title, mega_link, queue):
+
+    imdb_json = json.loads('''
     {
-      "name": "",
-      "description": "",
-      "aggregateRating": {
-        "ratingValue": 0
-      },
-      "genre": [],
-      "datePublished": "",
-      "duration": ""
+      "imdb_title": "Not found",
+      "hd4me_title": "''' + hd4me_title + '''",
+      "description": "Not found",
+      "rating": "N/A",
+      "genre": ["N/A"],
+      "datePublished": "N/A",
+      "duration": "N/A",
+      "year": "N/A",
+      "mega_link": "''' + mega_link + '''"
     }
-    """)
+    ''')
 
     try:
         f = requests.get('https://www.imdb.com/title/' + imdb_id, timeout=10)
     except:
-        return (imdb_json)
+        queue.put(imdb_json)
     else:
         bf = BeautifulSoup(f.content, 'html.parser')
         script = bf.find_all('script')[2]
-        imdb_json = json.loads(script.text)
-        return (imdb_json)
+        imdb_data = json.loads(script.text)
+
+        imdb_json["imdb_title"] = html.unescape(imdb_data['name'])
+        imdb_json["hd4me_title"] = hd4me_title
+        imdb_json["description"] = imdb_data['description']
+        imdb_json["genre"] = ", ".join(imdb_data['genre'])
+        imdb_json["rating"] = imdb_data['aggregateRating']['ratingValue']
+        imdb_json["datePublished"] = imdb_data['datePublished']
+        imdb_json["year"] = imdb_data['datePublished'][0:4]
+        imdb_json["mega_link"] = mega_link
+
+        queue.put(imdb_json)
 
 
 def sort_by_rating(movies):
@@ -174,4 +257,5 @@ class Movie:
         self.mega_link = mega_link
 
 
-if __name__ == '__main__': main()
+if __name__ == '__main__':
+    main()

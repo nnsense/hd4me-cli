@@ -1,68 +1,85 @@
 # hd4me-cli
 
-Questo breve programma in python (è stato creato con python 3.9 ma dovrebbe funzionare con qualsiasi versione di python superiore alla 3.6) permette di cercare, ottenere informazioni e mettere in coda per il download i file presenti su hd4me.
-
-Senza alcun argomento, il programma si limita ad elencare tutti i film presenti sul sito. Data la quantità (quasi 8000 al momento), è meglio restringere la ricerca.
-
-La ricerca può essere effettuata con lo switch `-s/--search`, ad esempio per cercare i film su "007":
-
 ```
-hd4me-cli -s "007"
-```
+usage: hd4me-cli [-h] [-l] [--min-year MIN_YEAR] [--max-year MAX_YEAR] [--min-rating MIN_RATING] [-r] [-y] [-d] [-p PATH] [-i] [--backup] movie_title
 
-E' possibile usare lo switch `-y/--anno-release` per restringere la ricerca ai soli film prodotti in quell'anno:
+positional arguments:
+  movie_title           Cerca una stringa specifica nel titolo, per elencare tutti i film usare "" (vuoto)
 
-```
-hd4me-cli -s "007" -y 1965
-```
-
-I risultati della ricerca possono essere ordinati per anno o per IMdb rating:
-
-```
-hd4me-cli -s "007" --rating
-hd4me-cli -s "007" --data
+optional arguments:
+  -h, --help            show this help message and exit
+  -l, --list            Elenca semplicemente i film trovati dalla ricerca (senza ulteriori dati, per velocizzare la ricerca, non sarà possibile usare --min-year, --max-year e --min-rating)
+  --min-year MIN_YEAR   Imposta l'anno minimo dei film da elencare
+  --max-year MAX_YEAR   Imposta l'anno minimo dei film da elencare (oggi, se assente)
+  --min-rating MIN_RATING
+                        Imposta il rating minimo dei film da elencare
+  -r, --rating          Ordina i film per IMdb rating
+  -y, --year            Ordina i film per anno di rilascio
+  -d, --download        Aggiungi il link mega alla coda download (richiede mega-cli installato)
+  -p PATH, --path PATH  Imposta un percorso per il download, se assente scarica nella directory corrente
+  -i, --info            Visualizza tutti i dettagli del film da IMdb
+  --backup              Crea una cartella 'backup' ed esporta tutti i dati sui film di hd4me e relativi file data in quella cartella
 ```
 
-Di default, le informazioni presentate sono solo il titolo da hd4me, il titolo originale da IMdb, anno e rating, per esempioç
+Questo breve programma in python (è stato creato con python 3.9 ma dovrebbe funzionare con qualsiasi versione di python superiore alla 3.6) permette di cercare, ottenere informazioni e mettere in coda per il download i film presenti su hd4me.
+
+Richiede, come minimo, parte del nome del film da cercare, ad esempio per cercare i film su "007":
 
 ```
-hd4me-cli -s "007" -y 1965
-Agente 007 – Thunderball: operazione tuono - (Thunderball, 1965 - rating: 6.9)
+> hd4me-cli "007"
+```
+
+E' possibile usare gli switch `--min-year / --max-year` e `--min-rating` per effettuare la ricerca dei soli film prodotti successivamente o precedentemente un dato anno o con un rating IMDB maggiore di un certo valore. I due argomenti posso essere usati contemporaneamente per restringere ulteriormente la ricerca:
+
+```
+> hd4me-cli "007" --min-year 1965
+oppure
+> hd4me-cli "007" --min-rating 7
+oppure
+> hd4me-cli "007" --min-year 1965 --min-rating 7
+oppure
+> hd4me-cli "007" --min-year 1965 --max-year 1980 --min-rating 7
+```
+
+I risultati della ricerca possono essere eventualmente ordinati per anno o per IMdb rating:
+
+```
+> hd4me-cli "007" --rating
+oppure
+> hd4me-cli "007" --year
+```
+
+Di default, le informazioni presentate sono solo il titolo da hd4me, il titolo originale da IMdb, data di rilascio e rating, per esempio:
+
+```
+> hd4me-cli "007" --min-year 1989
+007 – Vendetta privata - (Licence to Kill, 1989-07-14 - rating: 6.6)
 ```
 
 Per ottenere maggiori dettagli, come genere e trama (in inglese), usare `--info`.
 
 ```
-hd4me-cli -s "007" -y 1965 --info
-Thunderball (Data: 1965-12-30, Rating: 6.9)
-Download: https://mega.nz/#!8hdF3Apa!bkpOyim50t8ArG4GhsgWLFVdM2ZJFx_KFOCNA11WSgQ
+> hd4me-cli "007" --min-year 1989 --info
+Licence to Kill (Data rilascio: 1989-07-14, IMDB Rating: 6.6)
+Download link: https://[redacted]
 Genere: Action, Adventure, Thriller
-Trama:James Bond heads to the Bahamas to recover two nuclear warheads stolen by S.P.E.C.T.R.E. Agent Emilio Largo in an international extortion scheme.
+Trama: A vengeful James Bond goes rogue to infiltrate and take down the organization of a drug lord who has murdered his friend&apos;s new wife and left him near death.
 ```
 
 Impostando lo switch `-d / --download` si aggiungerà il file alla coda di `mega-get`, ovviamente la CLI di mega deve essere stata preventivamente installata.
 
-Di default il file viene scaricato nella diractory corrente, per impostare la destinazione usare `-p/--path`:
+Di default il file viene scaricato nella directory corrente, per impostare la destinazione usare `-p/--path`:
 
 ```
-hd4me-cli -s "007" -y 1965 -dp /directory/di/destinazione`
+> hd4me-cli "007" --min-year 1989 -dp /directory/di/destinazione`
 ```
 
-Infine, per i maniaci delle informazioni, è possibile scaricare il file con tutte le informazioni sul video da hd4me con `-m / --mediainfo`:
+Infine, è possibile scaricare una sorta di backup in una cartella (creata automaticamente col nome "backup") che includerà tutte le informazioni dal hd4me e i file con le informazioni sul video con `--backup`. Questo argomento scrive direttamente sul disco e non permette quindi di ordinare l'elenco.
 
 ```
-hd4me-cli -s "007" -y 1965 --mediainfo
+> hd4me-cli "007" --backup
 ```
 
 **Importante**:
 
-Lo script funziona in modo molto semplice e, per il momento, in modo "seriale".
-
-Questo significa che ad ogni ricerca lo script andrà a prelevare le informazioni IMdb *per ogni file*, uno alla volta, il che richiede un tempo che può essere anche piuttosto lungo.
-
-Per fare un esempio, la ricerca di "007", che al momento restituisce 13 file, richiede circa 20 secondi per essere completata. 
-
-Un file specifico invece, per esempio la ricerca di "beetlejuice" ne richiede circa 4.
-
-Fra i prossimi aggiornamenti vorrei implementare python threads per eseguire le ricerche in modo parallelo, sveltendo notevolmente la ricerca (e rendendo il programma più pesante sulla CPU, purtroppo leggero e veloce non vanno d'accordo..).
-
+Lo script ricerca le informazioni mancanti da IMDB **per ogni film elencato**, quindi maggiore è il numero di film trovati, più tempo sarà necessario per contattare IMDB, scaricare ed elaborare i dati, e visualizzare il risultato.
