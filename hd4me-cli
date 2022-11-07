@@ -17,14 +17,15 @@ parser = argparse.ArgumentParser()
 parser.add_argument('movie_title', help="Cerca una stringa specifica nel titolo, per elencare tutti i film usare \"\" (vuoto)")
 
 parser.add_argument("-l", "--list", help="Elenca semplicemente i film trovati dalla ricerca (senza ulteriori dati, per velocizzare la ricerca, \
-                    non sarà possibile usare --min-year, --max-year e --min-rating)",
+                    non sarà possibile ordinare o filtrare i titoli)",
                     action="store_true", default=False)
 parser.add_argument("--min-year", help="Imposta l'anno minimo dei film da elencare", type=int)
 parser.add_argument("--max-year", help="Imposta l'anno minimo dei film da elencare (oggi, se assente)", type=int)
+parser.add_argument("-y", "--year", help="Imposta l'anno esatto dei film da elencare", type=int)
 parser.add_argument("--min-rating", help="Imposta il rating minimo dei film da elencare", type=int)
 
-parser.add_argument("-r", "--rating", help="Ordina i film per IMdb rating", action="store_true", default=False)
-parser.add_argument("-y", "--year", help="Ordina i film per anno di rilascio", action="store_true", default=False)
+parser.add_argument("--sort-rating", help="Ordina i film per IMdb rating", action="store_true", default=False)
+parser.add_argument("--sort-year", help="Ordina i film per anno di rilascio", action="store_true", default=False)
 
 parser.add_argument("-d", "--download", help="Aggiungi il link mega alla coda download (richiede mega-cli installato)",
                     action="store_true", default=False)
@@ -34,6 +35,8 @@ parser.add_argument("-p", "--path",
 parser.add_argument("-i", "--info", help="Visualizza ulteriori dettagli sul film da IMdb", action="store_true", default=False)
 
 parser.add_argument("--backup", help="Crea una cartella 'backup' ed esporta tutti i dati sui film di hd4me e relativi file data in quella cartella", action="store_true", default=False)
+
+parser.add_argument("--debug", help="Abilita la modalità di debug (restituisce output più dettagliati", action="store_true", default=False)
 
 args = parser.parse_args()
 
@@ -133,6 +136,9 @@ def main():
 
         m = Movie(hd4me_title, imdb_title, date_published, rating, genres, plot, mega_link, size)
 
+        if args.debug:
+            print(m.__dict__)
+
         if args.min_year and args.max_year and args.min_rating:
             if year >= args.min_year and year <= args.max_year and rating >= args.min_rating:
                 movies[hd4me_title] = m
@@ -149,6 +155,11 @@ def main():
             if year <= args.min_year:
                 movies[hd4me_title] = m
 
+        elif args.year:
+            # There are movies on IMDB having the published year different than the actual release year (eg Terminator, published in 1984 released in 1985)
+            if year == args.year + 1 or year == args.year:
+                movies[hd4me_title] = m
+
         elif args.min_rating:
             if rating >= args.min_rating:
                 movies[hd4me_title] = m
@@ -156,10 +167,10 @@ def main():
         else:
             movies[hd4me_title] = m
 
-    if args.rating:
+    if args.sort_rating:
         movies = sort_by_rating(movies)
 
-    if args.year:
+    if args.sort_year:
         movies = sort_by_year(movies)
 
     for title, movie in movies.items():
@@ -222,11 +233,11 @@ def get_imdb_json(imdb_id, hd4me_title, mega_link, movie_size, queue):
       "imdb_title": "Not found",
       "hd4me_title": "''' + hd4me_title + '''",
       "description": "Not found",
-      "rating": "N/A",
+      "rating": 0,
       "genre": ["N/A"],
-      "datePublished": "N/A",
-      "duration": "N/A",
-      "year": "N/A",
+      "datePublished": "1900-01-01",
+      "duration": "PT0M00S",
+      "year": 1900,
       "size": "''' + movie_size + '''",
       "mega_link": "''' + mega_link + '''"
     }
@@ -239,16 +250,22 @@ def get_imdb_json(imdb_id, hd4me_title, mega_link, movie_size, queue):
     else:
         bf = BeautifulSoup(f.content, 'html.parser')
         script = bf.find_all('script')[2]
+
         imdb_data = json.loads(script.text)
+
+        if args.debug:
+            print(imdb_data)
 
         imdb_json["imdb_title"] = html.unescape(imdb_data['name'])
         imdb_json["hd4me_title"] = hd4me_title
         imdb_json["description"] = imdb_data['description']
         imdb_json["genre"] = ", ".join(imdb_data['genre'])
         imdb_json["rating"] = imdb_data['aggregateRating']['ratingValue']
-        imdb_json["datePublished"] = imdb_data['datePublished']
-        imdb_json["year"] = imdb_data['datePublished'][0:4]
         imdb_json["mega_link"] = mega_link
+
+        if 'datePublished' in imdb_data:
+            imdb_json["datePublished"] = imdb_data['datePublished']
+            imdb_json["year"] = imdb_data['datePublished'][0:4]
 
         queue.put(imdb_json)
 
