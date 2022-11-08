@@ -65,6 +65,9 @@ def main():
 
     for full_title, hd4me_id in data.items():
 
+        if args.debug:
+            print(full_title)
+
         try:
             hd4me_title = re.search(r"(^.*)\s\(", full_title)[1]
         except:
@@ -72,17 +75,19 @@ def main():
 
         if args.movie_title.lower() in hd4me_title.lower():
 
-            hd4me_page = requests.get("https://hd4me.net/" + hd4me_id.replace("?p=", ""))
-            mega_link = ""
-
-            mega_link = get_megalink(hd4me_page)
-            imdb_id = get_imdb_id(hd4me_page)
-
             if args.list:
                 print(full_title)
                 continue
 
-            elif args.backup:
+            hd4me_page = requests.get("https://hd4me.net/" + hd4me_id.replace("?p=", ""))
+            imdb_id = get_imdb_id(hd4me_page)
+
+            if imdb_id is None and args.debug:
+                print(full_title + ": IMDB ID not found")
+
+            mega_link = get_megalink(hd4me_page)
+
+            if args.backup:
                 if not os.path.exists(os.getcwd() + "/backup"):
                     os.mkdir(os.getcwd() + "/backup")
 
@@ -110,11 +115,16 @@ def main():
             else:
 
                 try:
-                    movie_size = re.search(r"(\d{1,2}\.\d{1,2})", full_title)[1]
+                    hd4me_year = re.search(r"\((\d{4})\)", full_title)[1]
                 except:
-                    movie_size = 0
+                    hd4me_year = "0"
 
-                t = Thread(target=get_imdb_json, args=(imdb_id, hd4me_title, mega_link, movie_size, q, ), name=full_title)
+                try:
+                    movie_size = re.search(r"(\d{1}\.?\d{1,3})\s?(MB|GB)", full_title)[0]
+                except:
+                    movie_size = "0"
+
+                t = Thread(target=get_imdb_json, args=(imdb_id, hd4me_title, hd4me_year, mega_link, movie_size, q, ), name=full_title)
                 t.start()
                 threads.append(t)
 
@@ -129,15 +139,14 @@ def main():
         hd4me_title = imdb_json['hd4me_title']
         genres = imdb_json['genre']
         rating = imdb_json['rating']
-        date_published = imdb_json['datePublished']
         year = int(imdb_json['year'])
         mega_link = imdb_json['mega_link']
         size = imdb_json['size']
 
-        m = Movie(hd4me_title, imdb_title, date_published, rating, genres, plot, mega_link, size)
+        m = Movie(hd4me_title, imdb_title, year, rating, genres, plot, mega_link, size)
 
-        if args.debug:
-            print(m.__dict__)
+        # if args.debug:
+            # print(m.__dict__)
 
         if args.min_year and args.max_year and args.min_rating:
             if year >= args.min_year and year <= args.max_year and rating >= args.min_rating:
@@ -156,8 +165,7 @@ def main():
                 movies[hd4me_title] = m
 
         elif args.year:
-            # There are movies on IMDB having the published year different than the actual release year (eg Terminator, published in 1984 released in 1985)
-            if year == args.year + 1 or year == args.year:
+            if year == args.year:
                 movies[hd4me_title] = m
 
         elif args.min_rating:
@@ -176,9 +184,9 @@ def main():
     for title, movie in movies.items():
         if args.info:
             print("%s (Data rilascio: %s, IMDB Rating: %s)\nDownload link: %s\nSize: %s\nGenere: %s\nTrama: %s\n---" %
-                  (movie.imdb_title, movie.date_published, movie.rating, movie.mega_link, movie.size, movie.genres, movie.plot))
+                  (movie.imdb_title, movie.year, movie.rating, movie.mega_link, movie.size, movie.genres, movie.plot))
         else:
-            print("%s (%s, %s - rating: %s, size: %s)" % (movie.hd4me_title, movie.imdb_title, movie.date_published, movie.rating, movie.size))
+            print("%s (%s, %s - rating: %s, size: %s)" % (movie.hd4me_title, movie.imdb_title, movie.year, movie.rating, movie.size))
 
         if args.download:
 
@@ -220,13 +228,14 @@ def get_imdb_id(response):
     i_selector = Selector(response.text)
     imdb_id = i_selector.xpath('//div[@class="imdbRatingPlugin"]/@data-title').get()
 
+    # The imdb_id is sometime in a span tag
     if imdb_id is None:
         imdb_id = i_selector.xpath('//span[@class="imdbRatingPlugin"]/@data-title').get()
 
     return imdb_id
 
 
-def get_imdb_json(imdb_id, hd4me_title, mega_link, movie_size, queue):
+def get_imdb_json(imdb_id, hd4me_title, hd4me_year, mega_link, movie_size, queue):
 
     imdb_json = json.loads('''
     {
@@ -235,9 +244,8 @@ def get_imdb_json(imdb_id, hd4me_title, mega_link, movie_size, queue):
       "description": "Not found",
       "rating": 0,
       "genre": ["N/A"],
-      "datePublished": "1900-01-01",
       "duration": "PT0M00S",
-      "year": 1900,
+      "year": "''' + hd4me_year + '''",
       "size": "''' + movie_size + '''",
       "mega_link": "''' + mega_link + '''"
     }
@@ -249,25 +257,24 @@ def get_imdb_json(imdb_id, hd4me_title, mega_link, movie_size, queue):
         queue.put(imdb_json)
     else:
         bf = BeautifulSoup(f.content, 'html.parser')
-        script = bf.find_all('script')[2]
+        
+        try:
+            script = bf.find_all('script')[2]
+        except:
+            print("Impossibile connettersi ad imdb, riprovare più tardi")
+            queue.put(imdb_json)
+        else:
+            imdb_data = json.loads(script.text)
+            imdb_json["imdb_title"] = html.unescape(imdb_data["name"])
+            imdb_json["description"] = imdb_data["description"]
+            imdb_json["genre"] = ", ".join(imdb_data["genre"])
+            imdb_json["rating"] = imdb_data["aggregateRating"]["ratingValue"]
 
-        imdb_data = json.loads(script.text)
+            if hd4me_year == "0":
+                if "datePublished" in imdb_data:
+                    imdb_json["year"] = imdb_data["datePublished"][0:4]
 
-        if args.debug:
-            print(imdb_data)
-
-        imdb_json["imdb_title"] = html.unescape(imdb_data['name'])
-        imdb_json["hd4me_title"] = hd4me_title
-        imdb_json["description"] = imdb_data['description']
-        imdb_json["genre"] = ", ".join(imdb_data['genre'])
-        imdb_json["rating"] = imdb_data['aggregateRating']['ratingValue']
-        imdb_json["mega_link"] = mega_link
-
-        if 'datePublished' in imdb_data:
-            imdb_json["datePublished"] = imdb_data['datePublished']
-            imdb_json["year"] = imdb_data['datePublished'][0:4]
-
-        queue.put(imdb_json)
+            queue.put(imdb_json)
 
 
 def sort_by_rating(movies):
@@ -276,15 +283,15 @@ def sort_by_rating(movies):
 
 
 def sort_by_year(movies):
-    sorted_movies = sorted(movies.items(), key=lambda x: x[1].date_published, reverse=True)
+    sorted_movies = sorted(movies.items(), key=lambda x: x[1].year, reverse=True)
     return dict(sorted_movies)
 
 
 class Movie:
-    def __init__(self, hd4me_title, imdb_title, date_published, rating, genres, plot, mega_link, size):
+    def __init__(self, hd4me_title, imdb_title, year, rating, genres, plot, mega_link, size):
         self.hd4me_title = hd4me_title
         self.imdb_title = imdb_title
-        self.date_published = date_published
+        self.year = year
         self.rating = rating
         self.genres = genres
         self.plot = plot
