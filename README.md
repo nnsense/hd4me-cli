@@ -1,6 +1,7 @@
 # hd4me-cli
 
-## Sul sito web hd4me è stato implementato Cloudflare, che impedisce a questo script di fare parsing delle sue pagine. Diversi tentaativi di aggiornamento sono falliti, archivio il progetto. 
+> Sul sito web hd4me è stato implementato Cloudflare, che impedisce a questo script di fare parsing delle sue pagine. 
+> Diversi tentativi di aggirare il problema sono falliti e il tempo da dedicare è limitato, archivio il progetto. 
 
 ```
 usage: hd4me-cli [-h] [-l] [--min-year MIN_YEAR] [--max-year MAX_YEAR] [--min-rating MIN_RATING] [-r] [-y] [-d] [-p PATH] [-i] [--backup] movie_title
